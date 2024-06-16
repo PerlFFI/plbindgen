@@ -93,10 +93,6 @@ fn is_public_struct(node: &syn::ItemStruct) -> bool {
     matches!(&node.vis, syn::Visibility::Public(_))
 }
 
-fn is_newtype_struct(node: &syn::ItemStruct) -> bool {
-    node.fields.len() == 1
-}
-
 fn is_opaque_struct(node: &syn::ItemStruct) -> bool {
     !is_repr_c(&node.attrs) && is_public_struct(node)
 }
@@ -235,22 +231,16 @@ fn rust_pointer_to_perl_ffi_type(ty: &syn::TypePtr) -> Result<String> {
     Ok(format!("{}*", elem_ty))
 }
 
-// we support a handful of types, qualified or unqualified
-// for example:
-// c_char
 fn rust_path_to_perl_ffi_type(ty: &syn::TypePath) -> Result<String> {
     Ok(ty.path.to_token_stream().to_string())
 }
 
 fn main() {
-    // Load the Rust source code
     let code = fs::read_to_string("src/lib.rs").expect("Unable to read file");
-
-    // Parse the Rust source code
-    let syntax: File = syn::parse_file(&code).expect("Unable to parse file");
+    let file: File = syn::parse_file(&code).expect("Unable to parse file");
 
     let mut visitor = ForeignVisitor::default();
-    visitor.visit_file(&syntax);
+    visitor.visit_file(&file);
     let mut typemap: HashMap<String, String> = HashMap::new();
 
     for Enum { name, variants } in &visitor.enums {
