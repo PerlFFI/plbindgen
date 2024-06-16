@@ -68,20 +68,6 @@ impl Library {
                 function.ret.clone_from(replacement);
             }
         }
-        // we cannot use the type alias for enums in records, so all enums will
-        // be replaced with the type "enum"
-        // TODO: need to support senum (signed enum) later.
-        let mut enums = HashSet::new();
-        for Enum { name, .. } in &self.enums {
-            enums.insert(name);
-        }
-        for record in &mut self.structs {
-            for field in &mut record.fields {
-                if enums.contains(&field.ty) {
-                    field.ty = "enum".to_string();
-                }
-            }
-        }
     }
 
 }
