@@ -6,5 +6,9 @@ edition = "2021"
 [dependencies]
 clap = { version = "4.5.7", features = ["derive"] }
 eyre = "0.6.12"
+minijinja = { version = "2.0.2", features = ["loader"] }
 quote = "1.0.36"
+rust-embed = "8.4.0"
+serde = { version = "1.0.203", features = ["derive"] }
 syn = { version = "2.0.66", features = ["full", "extra-traits", "visit"] }
+toml = { version = "0.8.14", features = ["indexmap", "preserve_order"] }

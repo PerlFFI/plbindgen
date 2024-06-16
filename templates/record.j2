@@ -1,0 +1,16 @@
+package {{ args.name }}::{{ record.name }};
+
+use FFI::Platypus 2.00;
+use FFI::Platypus::Record;
+
+sub init_record_layout {
+    my($class, $ffi) = @_;
+
+  record_layout_1($ffi, qw(
+  {% for field in record.fields -%}
+      {{ "    " }}{{ field.type }} {{ field.name }}
+  {% endfor -%}
+  ));
+}
+
+1;
