@@ -2,23 +2,22 @@ mod api;
 mod args;
 mod templates;
 
-use api::{Library, Struct};
+use api::Library;
 use args::Args;
 use eyre::{eyre, Context, Result};
 use minijinja::{context, Value};
-use std::{
-    collections::HashMap,
-    fs::{self, create_dir_all},
-};
+use std::
+    fs::{self, create_dir_all}
+;
 use syn::visit::Visit;
 
 fn main() -> Result<()> {
     let args = Args::new();
 
-    let code = fs::read_to_string(&args.input)
-        .wrap_err(eyre!("failed to read {}", args.input.display()))?;
+    let code = fs::read_to_string(&args.crate_file)
+        .wrap_err(eyre!("failed to read {}", args.crate_file.display()))?;
     let file =
-        syn::parse_file(&code).wrap_err(eyre!("failed to parse {}", args.input.display()))?;
+        syn::parse_file(&code).wrap_err(eyre!("failed to parse {}", args.crate_file.display()))?;
 
     let mut lib = Library::default();
     lib.visit_file(&file);
