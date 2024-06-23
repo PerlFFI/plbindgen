@@ -45,7 +45,7 @@ fn main() -> Result<()> {
     let s = makefile.render(context! {})?;
     fs::write("Makefile.PL", s)?;
 
-    for record in lib.structs {
+    for record in lib.records {
         let template = env.get_template("record.j2")?;
         let s = template.render(context! {
             record => record,

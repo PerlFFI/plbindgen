@@ -5,7 +5,7 @@ use quote::ToTokens;
 use serde::{Deserialize, Serialize};
 use syn::{
     visit::{self, Visit},
-    Abi, ItemFn, Type,
+    ItemFn, Type,
 };
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -17,6 +17,7 @@ pub struct Function {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Enum {
+    pub repr: Repr,
     pub name: String,
     pub variants: Vec<Variant>,
 }
@@ -24,11 +25,11 @@ pub struct Enum {
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Variant {
     pub name: String,
-    pub value: u32,
+    pub value: String,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
-pub struct Struct {
+pub struct Record {
     pub name: String,
     pub fields: Vec<Field>,
 }
@@ -42,11 +43,16 @@ pub struct Field {
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
+pub struct Opaque {
+    pub name: String,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Library {
-    pub functions: Vec<Function>,
+    pub exports: Vec<Function>,
     pub enums: Vec<Enum>,
-    pub structs: Vec<Struct>,
-    pub opaques: Vec<String>,
+    pub records: Vec<Record>,
+    pub opaques: Vec<Opaque>,
 }
 
 impl Library {
@@ -54,11 +60,11 @@ impl Library {
         // any opaque type will originally be NAME*, but platypus wants it to be NAME
         // so we need to remove the pointer symbol
         let mut depoint: HashMap<String, String> = HashMap::new();
-        for opaque in &self.opaques {
-            depoint.insert(format!("{}*", opaque), opaque.clone());
+        for Opaque { name } in &self.opaques {
+            depoint.insert(format!("{}*", name), name.clone());
         }
 
-        for function in &mut self.functions {
+        for function in &mut self.exports {
             for arg in &mut function.args {
                 if let Some(replacement) = depoint.get(arg) {
                     arg.clone_from(replacement);
@@ -69,63 +75,101 @@ impl Library {
             }
         }
     }
-
 }
 
-fn is_extern_c(node: &ItemFn) -> bool {
-    matches!(&node.sig.abi, Some(Abi {
-            name: Some(refname),
-            ..
-        }) if refname.value().as_str() == "C")
-}
-
-fn is_public(node: &ItemFn) -> bool {
-    matches!(&node.vis, syn::Visibility::Public(_))
-}
-
-fn is_no_mangle(node: &ItemFn) -> bool {
-    node.attrs
-        .iter()
-        .any(|attribute| attribute.path().is_ident("no_mangle"))
-}
-
-fn is_exported(node: &ItemFn) -> bool {
-    is_extern_c(node) && is_public(node) && is_no_mangle(node)
-}
-
-fn is_repr_c(attributes: &[syn::Attribute]) -> bool {
-    attributes.iter().any(|attribute| {
+fn is_export(node: &ItemFn) -> bool {
+    node.attrs.iter().any(|attribute| {
         let path = attribute.path();
-        let mut is_repr_c = false;
-        if path.is_ident("repr") {
-            attribute
-                .parse_nested_meta(|meta| {
-                    if meta.path.is_ident("C") {
-                        is_repr_c = true;
-                    }
 
-                    Ok(())
-                })
-                .expect("Failed to parse repr attribute");
-        }
-        is_repr_c
+        path.is_ident("export")
     })
 }
 
-fn is_simple_enum(node: &syn::ItemEnum) -> bool {
-    is_repr_c(&node.attrs)
-        && node
-            .variants
-            .iter()
-            .all(|variant| variant.fields.is_empty())
+#[derive(Debug, Default, Serialize, Deserialize, strum::EnumString)]
+#[strum(serialize_all = "snake_case")]
+#[serde(rename_all = "lowercase")]
+pub enum Repr {
+    #[strum(serialize = "C")]
+    #[serde(rename = "enum")]
+    #[default]
+    C,
+    U8,
+    U16,
+    U32,
+    U64,
+    I8,
+    I16,
+    I32,
+    I64,
 }
 
-fn is_public_struct(node: &syn::ItemStruct) -> bool {
-    matches!(&node.vis, syn::Visibility::Public(_))
+fn get_repr(attributes: &[syn::Attribute]) -> Option<Repr> {
+    let mut repr = None;
+    for attribute in attributes {
+        let path = attribute.path();
+        if path.is_ident("repr") {
+            let _ = attribute.parse_nested_meta(|meta| {
+                let ident = meta.path.get_ident().map(|ident| ident.to_string());
+                repr = ident.and_then(|ident| ident.parse().ok());
+                Ok(())
+            });
+        }
+    }
+
+    repr
 }
 
-fn is_opaque_struct(node: &syn::ItemStruct) -> bool {
-    !is_repr_c(&node.attrs) && is_public_struct(node)
+trait OpaqueItem {
+    fn is_opaque(&self) -> bool;
+}
+
+impl From<&syn::ItemStruct> for Opaque {
+    fn from(item: &syn::ItemStruct) -> Self {
+        Self {
+            name: item.ident.to_string(),
+        }
+    }
+}
+
+impl OpaqueItem for syn::ItemStruct {
+    fn is_opaque(&self) -> bool {
+        matches!(self.vis, syn::Visibility::Public(_))
+            && self.attrs.iter().any(|attribute| {
+                let path = attribute.path();
+
+                path.is_ident("opaque")
+            })
+            && !is_record(self)
+    }
+}
+
+
+impl From<&syn::ItemType> for Opaque {
+    fn from(item: &syn::ItemType) -> Self {
+        Self {
+            name: item.ident.to_string(),
+        }
+    }
+}
+
+impl OpaqueItem for syn::ItemType {
+    fn is_opaque(&self) -> bool {
+        self.attrs.iter().any(|attribute| {
+            let path = attribute.path();
+
+            path.is_ident("opaque")
+        })
+    }
+}
+
+
+fn is_record(item_struct: &syn::ItemStruct) -> bool {
+    matches!(item_struct.vis, syn::Visibility::Public(_))
+        && item_struct.attrs.iter().any(|attribute| {
+            let path = attribute.path();
+
+            path.is_ident("record")
+        })
 }
 
 fn fn_arg_type(arg: &syn::FnArg) -> Option<&Type> {
@@ -144,10 +188,9 @@ fn return_type(node: &ItemFn) -> Option<&Type> {
 
 impl<'ast> Visit<'ast> for Library {
     fn visit_item_struct(&mut self, node: &'ast syn::ItemStruct) {
-        if is_opaque_struct(node) {
-            let name = node.ident.to_string();
-            self.opaques.push(name);
-        } else if is_repr_c(&node.attrs) {
+        if node.is_opaque() {
+            self.opaques.push(node.into());
+        } else if is_record(node) {
             let name = node.ident.to_string();
             let fields = node
                 .fields
@@ -158,46 +201,47 @@ impl<'ast> Visit<'ast> for Library {
                     Field { name, ty }
                 })
                 .collect();
-            self.structs.push(Struct { name, fields });
+            self.records.push(Record { name, fields });
         }
 
         visit::visit_item_struct(self, node);
     }
 
+    fn visit_item_type(&mut self, node: &'ast syn::ItemType) {
+        if node.is_opaque() {
+            self.opaques.push(node.into());
+        }
+
+        visit::visit_item_type(self, node);
+    }
+
     fn visit_item_enum(&mut self, node: &'ast syn::ItemEnum) {
-        if is_simple_enum(node) {
+        if let Some(repr) = get_repr(&node.attrs) {
             let name = node.ident.to_string();
             let variants = node
                 .variants
                 .iter()
                 .map(|variant| {
                     let name = variant.ident.to_string();
-                    let value = variant
-                        .discriminant
-                        .as_ref()
-                        .and_then(|(_, expr)| {
-                            if let syn::Expr::Lit(lit) = expr {
-                                if let syn::Lit::Int(int) = &lit.lit {
-                                    Some(int.base10_parse::<u32>().unwrap())
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or(0);
+                    let value = match &variant.discriminant {
+                        Some((_, expr)) => expr.to_token_stream().to_string(),
+                        None => name.clone(),
+                    };
                     Variant { name, value }
                 })
                 .collect();
-            self.enums.push(Enum { name, variants });
+            self.enums.push(Enum {
+                repr,
+                name,
+                variants,
+            });
         }
 
         visit::visit_item_enum(self, node);
     }
 
     fn visit_item_fn(&mut self, node: &'ast ItemFn) {
-        if is_exported(node) {
+        if is_export(node) {
             let name = node.sig.ident.to_string();
             let arg_types: Vec<String> = node
                 .sig
@@ -211,7 +255,7 @@ impl<'ast> Visit<'ast> for Library {
                 .map(rust_to_perl_ffi_type)
                 .unwrap_or(Ok("void".to_string()))
                 .unwrap();
-            self.functions.push(Function {
+            self.exports.push(Function {
                 name,
                 args: arg_types,
                 ret: ret_type,
@@ -252,7 +296,7 @@ fn rust_array_to_perl_ffi_type(ty: &syn::TypeArray) -> Result<String> {
 
     // special case for c_char to string
     if elem_ty == "c_char" {
-        return Ok(format!("string({len})"))
+        return Ok(format!("string({len})"));
     }
 
     Ok(format!("{elem_ty}[{len}]"))
@@ -268,5 +312,15 @@ fn rust_pointer_to_perl_ffi_type(ty: &syn::TypePtr) -> Result<String> {
 }
 
 fn rust_path_to_perl_ffi_type(ty: &syn::TypePath) -> Result<String> {
+    // special case array<T> to T[] in platypus
+    if let Some(segment) = ty.path.segments.iter().next() {
+        if segment.ident == "array" {
+            if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                if let syn::GenericArgument::Type(ty) = args.args.iter().next().unwrap() {
+                    return rust_to_perl_ffi_type(ty).map(|ty| format!("{}[]", ty));
+                }
+            }
+        }
+    }
     Ok(ty.path.to_token_stream().to_string())
 }

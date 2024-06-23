@@ -23,15 +23,11 @@ BEGIN {
 
 our $VERSION = {{ cargo.package.version | perl_quote }};
 
-{% for struct in lib.structs -%}
-use {{ args.name }}::{{ struct.name }};
-{% endfor %}
-
 my $ffi = FFI::Platypus->new( api => 2, lang => 'Rust' );
 $ffi->bundle;
 
 {% for enum in lib.enums %}
-$ffi->type(enum => {{ enum.name | perl_quote }});
+$ffi->type({{ enum.repr }} => {{ enum.name | perl_quote }});
 {% set constants = enum.variants | map(attribute='name') | map('perl_quote') | join(', ') %}
 {% for variant in enum.variants -%}
 use constant {{ variant.name }} => {{ variant.value }};
@@ -39,20 +35,22 @@ use constant {{ variant.name }} => {{ variant.value }};
 push @{ $EXPORT_TAGS{all} }, {{ constants }};
 {% endfor %}
 
-{% for name in lib.opaques -%}
-$ffi->type(opaque => {{ name | perl_quote }});
+{% for opaque in lib.opaques -%}
+$ffi->type(opaque => {{ opaque.name | perl_quote }});
 {% endfor %}
 
-{% for record in lib.structs -%}
+{% for record in lib.records -%}
+use {{ args.name }}::{{ record.name }};
+
 {{ args.name }}::{{ record.name }}->init_record_layout($ffi);
 $ffi->type("record({{ args.name }}::{{ record.name }})" => '{{ record.name }}');
 {% endfor %}
 
-{% for fun in lib.functions -%}
+{% for fun in lib.exports -%}
 $ffi->attach( {{ fun.name }} => [{{ fun.args | map('perl_quote') | join(', ') }}] => {{ fun.ret | perl_quote }} );
 {% endfor %}
 
-{% set functions = lib.functions | map(attribute='name') | map('perl_quote') | join(', ') %}
+{% set functions = lib.exports | map(attribute='name') | map('perl_quote') | join(', ') %}
 push @{ $EXPORT_TAGS{all} }, {{ functions }};
 
 1; 
